@@ -1,131 +1,130 @@
-# 💼 AI Mock Interviewer
+# AI Mock Interviewer
 
-An offline, privacy-first **AI Mock Interviewer** web application built with **Streamlit** and a **Local Large Language Model (LLM)** powered by **Ollama**.
+An offline, privacy-focused resume-based interview chatbot built with Streamlit
+and a local Ollama language model. Upload a resume and practice a conversational
+interview based on your skills and projects, with follow-up questions, answer
+scores, and a downloadable final report.
 
-Designed for job seekers and students preparing for technical, behavioral, or mixed interviews with real-time scoring, constructive feedback, model answers, and an executive hiring-readiness report.
-
----
-
-## 📌 Project Overview & How It Works
-
-The AI Mock Interviewer operates in a closed-loop interactive cycle entirely on your local machine—**no API keys, no paid subscriptions, no cloud latency, and 100% data privacy**.
-
-### Architecture & Data Flow
+## How it works
 
 ```text
-[ User Selects Role & Level ] 
-               │
-               ▼
-   [ Streamlit UI Session ] 
-               │
-               ▼
- ┌─────────────────────────────┐
- │ 1. Question Generation      │ ◄── Injects previous questions to prevent repetition
- │    Ollama (qwen2.5:1.5b)   │
- └─────────────┬───────────────┘
-               │
-               ▼
-    [ Candidate Submits Answer ]
-               │
-               ▼
- ┌─────────────────────────────┐
- │ 2. Answer Evaluation        │ ──► Returns strict JSON:
- │    Ollama (format="json")   │     - Score (0-10)
- └─────────────┬───────────────┘     - Strengths & Improvements
-               │                     - Ideal model answer
-               ▼
-    [ Next Question / Loop ]
-               │
-               ▼
- ┌─────────────────────────────┐
- │ 3. Executive Final Report   │ ──► Aggregate metrics, full breakdown table,
- │    Ollama Synthesis         │     verdict & downloadable .txt report
- └─────────────────────────────┘
+Resume upload (PDF/TXT)
+        ↓
+Text extraction and resume analysis (structured JSON)
+        ↓
+Conversational interview (resume-specific questions and follow-ups)
+        ↓
+Silent per-answer evaluation (score and feedback)
+        ↓
+Final report and downloadable TXT
 ```
 
-1. **User Input**: Candidate selects job role (Python, Java, Web, Data Analyst, HR, or Custom), difficulty (Fresher, Intermediate, Experienced), interview type, and number of questions (3–10).
-2. **Context-Aware Prompting**: The system generates unique, difficulty-calibrated questions while injecting history to avoid duplicate questions.
-3. **Structured JSON Evaluation**: The local LLM evaluates each response and outputs strict JSON containing a numerical score (0–10), strengths, areas for improvement, and a concise model answer.
-4. **Final Assessment & Export**: Upon completing all questions, the app tallies scores, generates an executive hiring-readiness verdict via LLM synthesis, and provides a one-click `.txt` downloadable report.
+1. Upload a text-based PDF or TXT resume. PDF text is extracted locally with
+   `pypdf`; scanned or image-only PDFs are not supported.
+2. The app extracts a compact profile from the resume locally so starting the
+   interview does not wait for a slow model: candidate name, detected skills,
+   projects, education, and an estimated experience level. You can optionally
+   enter a target role.
+3. The interviewer asks questions about the candidate's actual skills and
+   projects, asks at most one topic-specific follow-up before the final main
+   question, and includes a behavioral question. Question history is used to
+   avoid repeating local questions.
+4. Answers are evaluated on a 0–10 scale for relevance, context, actions,
+   reasoning, and outcomes rather than length alone. The optional sidebar
+   feedback setting shows answer-specific improvement advice, a reusable answer
+   structure, and a template for the relevant question type. A local rubric
+   keeps evaluation available if Ollama is slow or unavailable.
+5. The final report includes a score and percentage, questions and short answers,
+   strengths, areas to improve, resume improvement tips, and a hiring-readiness
+   verdict. Download it as a TXT file.
 
----
-
-## 🛠️ Technologies Used
+## Technologies
 
 | Technology | Purpose |
-| :--- | :--- |
-| **Python 3.10+** | Core programming language |
-| **Streamlit** | Interactive web application framework and reactive UI |
-| **Ollama** | Local LLM inference engine running offline models |
-| **Qwen 2.5 (1.5B)** | Small instruction-tuned language model suitable for lower-memory laptops |
+| --- | --- |
+| Python 3.10+ | Application logic |
+| Streamlit | Web interface, chat, and session state |
+| Ollama | Local LLM inference |
+| Qwen 2.5 1.5B | Default local model (`MODEL` in `app.py`) |
+| pypdf | Extracting text from PDF resumes |
 
----
-
-## 🚀 Setup & Execution Guide
+## Setup and run
 
 ### Prerequisites
-1. **Python 3.10 or higher** installed.
-2. **Ollama** installed from [ollama.com](https://ollama.com).
 
-### Step 1: Install Ollama and Download the Model
-Ollama must be installed, and the model must be downloaded separately. On Windows, open PowerShell and run:
-```bash
+- Python 3.10 or higher
+- [Ollama](https://ollama.com) installed
+
+### 1. Download the model
+
+In PowerShell or a terminal, run:
+
+```powershell
 ollama pull qwen2.5:1.5b
 ```
-The Ollama app normally starts its local service automatically on Windows. If the command reports that Ollama is not running, open the Ollama app from the Start menu; alternatively, run `ollama serve` in a separate terminal.
 
-### Step 2: Install Python Dependencies
-In the project directory, run:
-```bash
-pip install -r requirements.txt
+Ollama usually starts its local service automatically on Windows. If it is not
+running, open the Ollama app or run `ollama serve` in a separate terminal.
+
+### 2. Install Python dependencies
+
+From the project directory:
+
+```powershell
+py -m pip install -r requirements.txt
 ```
-*(On Windows, you can also run: `py -m pip install -r requirements.txt`)*
 
-### Step 3: Run the Application
-Launch the Streamlit web app:
-```bash
-streamlit run app.py
+### 3. Start the app
+
+```powershell
+py -m streamlit run app.py
 ```
-*(Or: `py -m streamlit run app.py`)*
 
-The application will open automatically in your browser at `http://localhost:8501`.
+Open the local address Streamlit prints (usually `http://localhost:8501`).
 
----
+If Ollama reports that the model is missing, run
+`ollama pull qwen2.5:1.5b`. To use Llama 3.2 3B instead, pull it with
+`ollama pull llama3.2:3b` and change `MODEL` in `app.py` to
+`"llama3.2:3b"`.
 
-## 💡 Model choice
+## Concepts demonstrated
 
-The app defaults to **Qwen 2.5 1.5B**, which is suitable for laptops with around 8GB RAM. If your laptop has more memory and you want to try **Llama 3.2 3B** instead:
+- **Prompt engineering:** resume-grounded questions, difficulty matching,
+  question history, and controlled conversational follow-ups.
+- **Structured JSON output:** machine-readable Ollama answer evaluation and
+  report generation, parsed and validated by Python.
+- **Answer coaching:** feedback includes a concrete improvement, a reusable
+  response structure, and an example template to adapt truthfully.
+- **Local inference and privacy:** resume text and interview answers are
+  processed by Ollama on the local machine; no cloud API or API key is used.
+- **Streamlit session state:** preserving the resume, analysis, messages,
+  question count, scores, and interview completion status across reruns.
+- **Document parsing:** extracting text from PDF and TXT documents.
+- **Conversational follow-ups:** reacting to answers and asking no more than one
+  follow-up for each interview question.
+- **Evaluation and reporting:** collecting scores and synthesizing strengths,
+  improvement areas, resume tips, and readiness guidance.
 
-1. Pull the model:
-   ```bash
-   ollama pull llama3.2:3b
-   ```
-2. Change the model configuration near the top of `app.py`:
-   ```python
-   MODEL = "llama3.2:3b"
-   ```
-3. Restart the Streamlit app.
+## Limitations
 
----
+- Scanned or image-only PDFs are not supported; upload a text-based PDF or TXT.
+- The resume is limited to about 6,000 characters in analysis prompts.
+- Small local models can misunderstand resumes, produce inconsistent scores,
+  or generate imperfect questions and advice. Treat the report as practice
+  guidance, not a hiring decision.
+- Ollama and the selected model must be installed locally and have sufficient
+  system resources.
+- Interview startup uses local resume extraction and does not wait for Ollama.
+  Answer scoring uses one Ollama request with an 8-second wait limit and falls
+  back to a local rubric. The question count is entered manually with no fixed
+  maximum.
+  Check Ollama with `ollama serve` and test the model using
+  `ollama run qwen2.5:1.5b "Reply with hello"`.
 
-## 🧠 Concepts Demonstrated (Viva Preparation)
+## Future improvements
 
-1. **Local LLM Inference**:
-   Running AI models entirely on consumer hardware using quantized weights via Ollama, eliminating cloud dependencies and privacy risks.
-2. **Structured JSON Output**:
-   Using `format="json"` in `ollama.chat()` and strict JSON prompt schemas. Evaluated with defensive parsing (`json.loads`), input validation/clamping (0–10), and an automatic single-retry fallback on parse exceptions.
-3. **State Machine & Session State**:
-   Managing complex multi-step UI flows (`answering` ➔ `feedback` ➔ `finished`) using `st.session_state` without losing state during page re-renders.
-4. **Adaptive Prompt Engineering**:
-   Dynamically passing question history into the system prompt to enforce question novelty and tailoring technical depth to the candidate's selected experience level (`Fresher`, `Intermediate`, `Experienced`).
-5. **Defensive Error Handling**:
-   Catching missing model errors or daemon disconnects gracefully with actionable terminal instructions (`ollama serve` and `ollama pull`).
-
----
-
-## 🔮 Future Improvements
-
-- **Speech-to-Text & Text-to-Speech**: Incorporating Whisper and Coqui TTS for a voice-interactive viva/interview experience.
-- **Resume Parsing**: Allowing candidates to upload PDF resumes to tailor interview questions directly to their project experience.
-- **Video & Emotion Analysis**: Using local computer vision models to evaluate eye contact, posture, and facial confidence.
-- **Custom Rubrics**: Allowing recruiters to upload custom company scoring rubrics.
+- Add OCR for scanned resumes.
+- Support editable scoring rubrics and interview styles.
+- Add speech input and output for voice practice.
+- Improve evaluation consistency with larger local models and configurable
+  assessment criteria.
