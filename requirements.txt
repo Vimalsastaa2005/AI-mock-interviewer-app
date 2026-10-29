@@ -1,3 +1,5 @@
-streamlit>=1.30.0
+streamlit>=1.40.0
 ollama>=0.3.0
 pypdf>=4.0.0
+pyttsx3>=2.90
+faster-whisper>=1.0.0

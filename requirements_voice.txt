@@ -1,0 +1,5 @@
+streamlit>=1.40
+ollama
+pypdf
+pyttsx3
+faster-whisper

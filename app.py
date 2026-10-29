@@ -1,8 +1,10 @@
 import hashlib
 import io
 import json
+import os
 import queue
 import re
+import tempfile
 import threading
 
 import ollama
@@ -15,6 +17,79 @@ from pypdf import PdfReader
 MODEL = "qwen2.5:1.5b"
 OLLAMA_CLIENT = ollama.Client(timeout=20)
 OLLAMA_TIMEOUT_SECONDS = 20
+
+
+def clean_question_for_speech(question: str) -> str:
+    """Remove basic Markdown formatting before sending a question to text-to-speech."""
+    question = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", question)
+    question = re.sub(r"[#*_`~>|]", "", question)
+    return re.sub(r"\s+", " ", question).strip()
+
+
+def create_question_audio(question: str) -> tuple[bytes | None, str | None]:
+    """Create offline speech audio and return its bytes for browser playback."""
+    audio_path = None
+    engine = None
+    audio_error = None
+    try:
+        import pyttsx3
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as audio_file:
+            audio_path = audio_file.name
+        engine = pyttsx3.init()
+        engine.save_to_file(clean_question_for_speech(question), audio_path)
+        engine.runAndWait()
+        with open(audio_path, "rb") as audio_file:
+            audio_bytes = audio_file.read()
+        if not audio_bytes:
+            raise RuntimeError("The speech engine created an empty audio file.")
+    except Exception as error:
+        audio_error = str(error)
+        audio_bytes = None
+    finally:
+        if engine is not None:
+            try:
+                engine.stop()
+            except Exception as error:
+                if audio_error is None:
+                    audio_error = str(error)
+                    audio_bytes = None
+        if audio_path and os.path.exists(audio_path):
+            try:
+                os.remove(audio_path)
+            except OSError as error:
+                if audio_error is None:
+                    audio_error = str(error)
+                    audio_bytes = None
+    return audio_bytes, audio_error
+
+
+@st.cache_resource(
+    show_spinner=(
+        "Loading the Whisper speech model. The first run may take a few minutes "
+        "while it downloads; please keep this page open."
+    )
+)
+def load_whisper_model(model_size: str):
+    """Load a local CPU Whisper model once and reuse it across Streamlit reruns."""
+    from faster_whisper import WhisperModel
+
+    return WhisperModel(model_size, device="cpu", compute_type="int8")
+
+
+def transcribe_audio(audio_bytes: bytes, model_size: str) -> str:
+    """Transcribe a microphone recording locally and remove its temporary file."""
+    audio_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as audio_file:
+            audio_file.write(audio_bytes)
+            audio_path = audio_file.name
+        model = load_whisper_model(model_size)
+        segments, _ = model.transcribe(audio_path, beam_size=5)
+        return " ".join(segment.text.strip() for segment in segments).strip()
+    finally:
+        if audio_path and os.path.exists(audio_path):
+            os.remove(audio_path)
 
 
 def ollama_chat(timeout_seconds: float = OLLAMA_TIMEOUT_SECONDS, **request):
@@ -68,6 +143,14 @@ def reset_interview_state() -> None:
             "level": "",
             "fallback_notice": "",
             "ollama_unavailable": False,
+            "latest_tts_audio": None,
+            "latest_tts_question": "",
+            "tts_error": "",
+            "tts_autoplay_pending": False,
+            "last_audio_id": None,
+            "transcript": "",
+            "transcript_pending": False,
+            "voice_error": "",
         }
     )
 
@@ -102,6 +185,14 @@ def begin_interview(analysis: dict, target_role: str, total_questions: int) -> N
             "level": analysis["experience_level"],
             "fallback_notice": "",
             "ollama_unavailable": False,
+            "latest_tts_audio": None,
+            "latest_tts_question": "",
+            "tts_error": "",
+            "tts_autoplay_pending": False,
+            "last_audio_id": None,
+            "transcript": "",
+            "transcript_pending": False,
+            "voice_error": "",
         }
     )
 
@@ -815,6 +906,14 @@ for key, default in [
     ("level", ""),
     ("fallback_notice", ""),
     ("ollama_unavailable", False),
+    ("latest_tts_audio", None),
+    ("latest_tts_question", ""),
+    ("tts_error", ""),
+    ("tts_autoplay_pending", False),
+    ("last_audio_id", None),
+    ("transcript", ""),
+    ("transcript_pending", False),
+    ("voice_error", ""),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -825,6 +924,13 @@ num_questions = st.sidebar.number_input(
     "Number of Questions", min_value=2, value=5, step=1
 )
 show_feedback = st.sidebar.checkbox("Show feedback after each answer", value=False)
+speak_enabled = st.sidebar.checkbox("Speak questions aloud", value=True)
+voice_mode = st.sidebar.checkbox("Answer with microphone", value=True)
+whisper_model_size = st.sidebar.selectbox(
+    "Speech recognition model",
+    options=["tiny", "base"],
+    index=1,
+)
 uploaded_resume = st.sidebar.file_uploader("Upload your resume", type=["pdf", "txt"])
 if uploaded_resume is not None:
     uploaded_bytes = uploaded_resume.getvalue()
@@ -879,14 +985,106 @@ st.progress(
     text=f"Question {progress} of {st.session_state.total_questions}",
 )
 
-for message in st.session_state.chat_messages:
+if speak_enabled and st.session_state.current_question:
+    if st.session_state.latest_tts_question != st.session_state.current_question:
+        audio_bytes, tts_error = create_question_audio(
+            st.session_state.current_question
+        )
+        st.session_state.latest_tts_audio = audio_bytes
+        st.session_state.latest_tts_question = st.session_state.current_question
+        st.session_state.tts_error = tts_error or ""
+        st.session_state.tts_autoplay_pending = audio_bytes is not None
+elif not speak_enabled:
+    st.session_state.tts_autoplay_pending = False
+
+latest_assistant_index = max(
+    (
+        index
+        for index, message in enumerate(st.session_state.chat_messages)
+        if message["role"] == "assistant"
+    ),
+    default=-1,
+)
+for index, message in enumerate(st.session_state.chat_messages):
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        if (
+            index == latest_assistant_index
+            and not st.session_state.interview_finished
+            and speak_enabled
+            and st.session_state.latest_tts_audio
+        ):
+            st.audio(
+                st.session_state.latest_tts_audio,
+                format="audio/wav",
+                autoplay=st.session_state.tts_autoplay_pending,
+            )
+            st.session_state.tts_autoplay_pending = False
+            if st.button("Replay question", key="replay_latest_question"):
+                st.session_state.tts_autoplay_pending = True
+                st.rerun()
+
+if not st.session_state.interview_finished and speak_enabled and st.session_state.tts_error:
+    st.warning(
+        f"Question audio could not be generated: {st.session_state.tts_error}"
+    )
 
 if not st.session_state.interview_finished:
+    voice_answer = None
+    if voice_mode:
+        audio_recording = st.audio_input("Record your answer")
+        if audio_recording is not None:
+            audio_bytes = audio_recording.getvalue()
+            audio_id = hashlib.sha256(audio_bytes).hexdigest()
+            if audio_id != st.session_state.last_audio_id:
+                st.session_state.last_audio_id = audio_id
+                st.session_state.transcript = ""
+                st.session_state.transcript_pending = False
+                st.session_state.voice_error = ""
+                try:
+                    st.session_state.transcript = transcribe_audio(
+                        audio_bytes, whisper_model_size
+                    )
+                    if st.session_state.transcript:
+                        st.session_state.transcript_pending = True
+                    else:
+                        st.session_state.voice_error = (
+                            "I could not hear anything. Please record your answer again."
+                        )
+                except Exception as error:
+                    st.session_state.voice_error = (
+                        f"Voice transcription failed: {error}. You can try again "
+                        "or type your answer below."
+                    )
+        else:
+            st.caption(
+                "Allow microphone access when your browser asks, then record an answer."
+            )
+
+        if st.session_state.voice_error:
+            st.warning(st.session_state.voice_error)
+        elif st.session_state.transcript_pending:
+            st.text_area(
+                "Transcript (edit before sending)",
+                key="transcript",
+                height=140,
+            )
+            if st.button("Send voice answer", key="send_voice_answer"):
+                voice_answer = st.session_state.transcript.strip()
+                if voice_answer:
+                    st.session_state.transcript_pending = False
+                else:
+                    st.warning("Please record or enter an answer before sending.")
+
     user_answer = st.chat_input("Type your answer...")
+    answer_to_send = None
     if user_answer and user_answer.strip():
-        answer = user_answer.strip()
+        answer_to_send = user_answer.strip()
+    elif voice_answer:
+        answer_to_send = voice_answer
+
+    if answer_to_send:
+        answer = answer_to_send
         evaluated = evaluate_answer(st.session_state.current_question, answer, st.session_state.analysis)
         if evaluated is not None:
             st.session_state.history.append(
@@ -897,6 +1095,7 @@ if not st.session_state.interview_finished:
                 }
             )
             st.session_state.chat_messages.append({"role": "user", "content": answer})
+            st.session_state.voice_error = ""
             turn = build_local_turn(
                 st.session_state.analysis,
                 st.session_state.question_count,
